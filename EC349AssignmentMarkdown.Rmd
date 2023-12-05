@@ -1,0 +1,265 @@
+---
+title: "Project Report"
+author: "Robin Leuridan"
+date: "2023-12-02"
+output:
+  html_document: default
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r eval=TRUE, include=FALSE}
+
+#Load Libraries
+library(glmnet)
+library(ggplot2)
+library(tidyverse)
+library(tree)
+library(rpart)
+library(rpart.plot)
+
+#New Libraries for this week
+library(adabag) #AdaBoost
+library(caret)  #create data partition/training dataset
+library(randomForest) #randomforest
+
+load(file="business_data.Rda")
+load(file="yelp_review_small.Rda")
+load(file="tip_data.Rda")
+
+#creating our own dataset combining the different datasets
+
+data<-inner_join(review_data_small,business_data, by="business_id")
+data2<-subset(tip_data, select=c(business_id,compliment_count))
+#put all data frames into list
+data <- inner_join(data, data2, multiple="any")
+data<- unnest(data, cols=c(attributes))#unnesting the dataframe attributes
+
+data<-subset(data,select=c(state,is_open,ByAppointmentOnly,BikeParking,RestaurantsPriceRange2,CoatCheck,RestaurantsTakeOut,RestaurantsDelivery,Caters,WheelchairAccessible,HappyHour,OutdoorSeating,HasTV,RestaurantsReservations,DogsAllowed,Alcohol,GoodForKids,RestaurantsAttire,RestaurantsTableService,RestaurantsGoodForGroups,DriveThru,NoiseLevel,BusinessAcceptsBitcoin,AcceptsInsurance,BYOB,Corkage,BYOBCorkage,stars.x,WiFi,review_count,funny,cool,useful,compliment_count), drop=TRUE)
+#data<-subset(data,select=c(review_count,state,useful,cool,WiFi,funny,Alcohol,stars.x)) relevant for model 2 in which only include some of the values, get lower accuracy
+#data<- data$Music(drop=TRUE)
+
+#turning data into factor variables
+data$stars.x<-as.factor(data$stars.x)#dependent variable
+
+#predictors
+data$state<-as.factor(data$state)
+data$Alcohol<-as.factor(data$Alcohol)
+data$WiFi<-as.factor(data$WiFi)
+data$is_open<-as.factor(data$is_open)
+data$ByAppointmentOnly<-as.factor(data$ByAppointmentOnly)
+data$BikeParking<-as.factor(data$BikeParking)
+data$RestaurantsPriceRange2<-as.factor(data$RestaurantsPriceRange2)
+data$CoatCheck<-as.factor(data$CoatCheck)
+data$RestaurantsTakeOut<-as.factor(data$RestaurantsTakeOut)
+data$RestaurantsDelivery<-as.factor(data$RestaurantsDelivery)
+data$Caters<-as.factor(data$Caters)
+data$WheelchairAccessible<-as.factor(data$WheelchairAccessible)
+data$HappyHour<-as.factor(data$HappyHour)
+data$OutdoorSeating<-as.factor(data$OutdoorSeating)
+data$HasTV<-as.factor(data$HasTV)
+data$RestaurantsReservations<-as.factor(data$RestaurantsReservations)
+data$DogsAllowed<-as.factor(data$DogsAllowed)
+data$GoodForKids<-as.factor(data$GoodForKids)
+data$RestaurantsAttire<-as.factor(data$RestaurantsAttire)
+data$RestaurantsTableService<-as.factor(data$RestaurantsTableService)
+data$RestaurantsGoodForGroups<-as.factor(data$RestaurantsGoodForGroups)
+data$DriveThru<-as.factor(data$DriveThru)
+data$NoiseLevel<-as.factor(data$NoiseLevel)
+data$BusinessAcceptsBitcoin<-as.factor(data$BusinessAcceptsBitcoin)
+data$AcceptsInsurance<-as.factor(data$AcceptsInsurance)
+data$BYOB<-as.factor(data$BYOB)
+data$Corkage<-as.factor(data$Corkage)
+data$BYOBCorkage<-as.factor(data$BYOBCorkage)
+####data taken out in order to increase accuracy####
+#data$BusinessAcceptsCreditCards<-as.factor(data$BusinessAcceptsCreditCards)
+#data$Smoking<-as.factor(data$Smoking)
+#data$GoodForDancing<-as.factor(data$GoodForDancing)
+
+
+#need to add this code to ensure NA is taken as another factor
+data$WiFi<-addNA(data$WiFi)
+data$Alcohol<-addNA(data$Alcohol)
+data$DogsAllowed<-addNA(data$DogsAllowed)
+data$WheelchairAccessible<-addNA(data$WheelchairAccessible)
+data$Caters<-addNA(data$Caters)
+data$RestaurantsDelivery<-addNA(data$RestaurantsDelivery)
+data$RestaurantsTakeOut<-addNA(data$RestaurantsTakeOut)
+data$BikeParking<-addNA(data$BikeParking)
+data$RestaurantsPriceRange2<-addNA(data$RestaurantsPriceRange2)
+data$ByAppointmentOnly<-addNA(data$ByAppointmentOnly)
+data$NoiseLevel<-addNA(data$NoiseLevel)
+data$is_open<-addNA(data$is_open)
+data$state<-addNA(data$state)
+data$CoatCheck<-addNA(data$CoatCheck)
+data$HappyHour<-addNA(data$HappyHour)
+data$OutdoorSeating<-addNA(data$OutdoorSeating)
+data$HasTV<-addNA(data$HasTV)
+data$RestaurantsReservations<-addNA(data$RestaurantsReservations)
+data$GoodForKids<-addNA(data$GoodForKids)
+data$RestaurantsAttire<-addNA(data$RestaurantsAttire)
+data$RestaurantsTableService<-addNA(data$RestaurantsTableService)
+data$RestaurantsGoodForGroups<-addNA(data$RestaurantsGoodForGroups)
+data$DriveThru<-addNA(data$DriveThru)
+data$BusinessAcceptsBitcoin<-addNA(data$BusinessAcceptsBitcoin)
+data$AcceptsInsurance<-addNA(data$AcceptsInsurance)
+data$BYOB<-addNA(data$BYOB)
+data$Corkage<-addNA(data$Corkage)
+data$BYOBCorkage<-addNA(data$BYOBCorkage)
+##taken out to increase accuracy
+
+#data$BusinessAcceptsCreditCards<-addNA(data$BusinessAcceptsCreditCards)
+#data$Smoking<-addNA(data$Smoking)
+#data$GoodForDancing<-addNA(data$GoodForDancing)
+
+#adapting data to make sure it is of numeric type
+data$review_count<-as.numeric(data$review_count)
+data$funny<-as.numeric(data$funny)
+data$cool<-as.numeric(data$cool)
+data$useful<-as.numeric(data$useful)
+data$compliment_count<-as.numeric(data$compliment_count)
+
+#due to a bug in the RandomForest code, need to rename those variables as NA
+levels(data$state)[is.na(levels(data$state))] <- "NA"
+levels(data$WiFi)[is.na(levels(data$WiFi))] <- "NA"
+levels(data$Alcohol)[is.na(levels(data$Alcohol))] <- "NA"
+levels(data$is_open)[is.na(levels(data$is_open))] <- "NA"
+levels(data$ByAppointmentOnly)[is.na(levels(data$ByAppointmentOnly))] <- "NA"
+levels(data$BikeParking)[is.na(levels(data$BikeParking))] <- "NA"
+levels(data$RestaurantsPriceRange2)[is.na(levels(data$RestaurantsPriceRange2))] <- "NA"
+levels(data$CoatCheck)[is.na(levels(data$CoatCheck))] <- "NA"
+levels(data$RestaurantsTakeOut)[is.na(levels(data$RestaurantsTakeOut))] <- "NA"
+levels(data$RestaurantsDelivery)[is.na(levels(data$RestaurantsDelivery))] <- "NA"
+levels(data$Caters)[is.na(levels(data$Caters))] <- "NA"
+levels(data$WheelchairAccessible)[is.na(levels(data$WheelchairAccessible))] <- "NA"
+levels(data$HappyHour)[is.na(levels(data$HappyHour))] <- "NA"
+levels(data$OutdoorSeating)[is.na(levels(data$OutdoorSeating))] <- "NA"
+levels(data$HasTV)[is.na(levels(data$HasTV))] <- "NA"
+levels(data$RestaurantsReservations)[is.na(levels(data$RestaurantsReservations))] <- "NA"
+levels(data$DogsAllowed)[is.na(levels(data$DogsAllowed))] <- "NA"
+levels(data$GoodForKids)[is.na(levels(data$GoodForKids))] <- "NA"
+levels(data$RestaurantsAttire)[is.na(levels(data$RestaurantsAttire))] <- "NA"
+levels(data$RestaurantsTableService)[is.na(levels(data$RestaurantsTableService))] <- "NA"
+levels(data$RestaurantsGoodForGroups)[is.na(levels(data$RestaurantsGoodForGroups))] <- "NA"
+levels(data$DriveThru)[is.na(levels(data$DriveThru))] <- "NA"
+levels(data$NoiseLevel)[is.na(levels(data$NoiseLevel))] <- "NA"
+levels(data$BusinessAcceptsBitcoin)[is.na(levels(data$BusinessAcceptsBitcoin))] <- "NA"
+levels(data$AcceptsInsurance)[is.na(levels(data$AcceptsInsurance))] <- "NA"
+levels(data$BYOB)[is.na(levels(data$BYOB))] <- "NA"
+levels(data$Corkage)[is.na(levels(data$Corkage))] <- "NA"
+levels(data$BYOBCorkage)[is.na(levels(data$BYOBCorkage))] <- "NA"
+
+
+#taken out to increase accuracy
+#levels(data$BusinessAcceptsCreditCards)[is.na(levels(data$BusinessAcceptsCreditCards))] <- "NA"
+#levels(data$Smoking)[is.na(levels(data$Smoking))] <- "NA"
+#levels(data$GoodForDancing)[is.na(levels(data$GoodForDancing))] <- "NA"
+
+# createDataPartition() function from the caret package to split the original dataset into a training and testing set and split data into training (90%) and testing set (10%)
+parts = createDataPartition(data$stars.x, p = 0.9, list = F)
+train = data[parts, ]
+test = data[-parts, ]
+
+
+### Actual model ###
+set.seed(1312)
+model_RF<-randomForest(stars.x~.,data=train, ntree=100, type="prob")
+pred_RF_test = predict(model_RF, test)
+
+
+```
+
+>Data Science Methodology
+
+
+We implemented the CRISP-DM methodology, the most common one for data science projects (see  Schröer et. al. (2021)). It enabled us to make sure this project was reproducible for other prediction models. Though it had disadvantages, those were limited in our context. 
+
+Following this methodology, we analysed the data going through each of the different stages: business understanding, data understanding, data preparation, modelling and evaluation. The structure of this final report also follows from this methodology choice. Furthermore, we kept documentation at each stage, indicating any changes made.
+
+
+>Business Understanding
+
+
+In this project, the main issue concerned classification and prediction, as the variable we sought to predict (the number of stars) was discrete and we strove to create a model to predict the values obtained for each observation.  
+
+>Data Understanding
+
+
+We used three different datasets: tip data, reviews_data and business_data. The reviews data were used to try to predict the variable stars (which indicates the number of stars a specific review assigns), the business data to access a multitude of variables indicating each businesses different attributes(such as whether the business has a TV) and the tip_data to retrieve compliment_count data, indicating how many compliments were given in the tip. We can see using the table below that the number of stars is skewed towards 5. Summary statistics for the other variables can be found in the appendix.
+```{r echo=FALSE}
+
+table(data$stars.x)#can see that the review stars is heavily skewed towards 5
+```
+
+>Data Preparation
+
+
+To analyse the data, we merged all three datasets together by the business id variable to group the reviews according to businesses. Furthermore, we transformed the type of the character variables to factor variables so as to run a random Tree model. We included the missing variables by allowing a level of the factors to represent the value as missing. Finally, we removed some of the data with only few observations, such as Open24Hours and AgesAllowed to reduce the likelihood of overfitting. 
+
+
+>Modeling
+
+
+In order to train our data intensively, we split the data in a 90-10 split, allowing for 90% of the observations to be in the training dataset, and testing our model on the remaining 10%. 
+
+```{r eval=FALSE, include=TRUE}
+
+# createDataPartition() function from the caret package to split the original dataset into a training and testing set and split data into training (90%) and testing set (10%)
+parts = createDataPartition(data$stars.x, p = 0.9, list = F)
+train = data[parts, ]
+test = data[-parts, ]
+
+```
+
+We first used a logistic regression to model this problem. As we wanted to classify observations, this choice enabled us to keep the predictions between the values needed and not exceed them. For a binary problem, this would have limited the values obtained between 0 and 1. However, as our aim was to predict the number of stars a review might have, we also used a multinomial, ordered logistic regression. This made it possible for the dependent variables to have multiple values outside 0 and 1, which was necessary since values between 1 and 5 were needed.  Though some predictors such as the review_count were to have a high impact on the predictions, the impact of others such as the variable HasTV was questionable. For this reason, we decided to adapt our logistic model using LASSO regression, in order to allow some variables to be removed entirely from the model.
+
+As the model did not perform well in predictions as could be attested using a measure of accuracy, measured through the number of observations correctly specified, we then switched to a decision tree-based model to better represent both the data and the problem as well as make our model more flexible. We still used a classification tree to analyse the data, due to the aforementioned reasons of classification problem. To decrease the inherent variance associated with decision trees, we employed a bagging method to average the observations and thus reduce overall variance. However, following our analysis using the LASSO model, it became clear that some of the variables were vastly more important than others. Thus, we found it relevant to use a Random Forest method. As some variables were more inclined to appear in decision trees depending on their importance, risk of high correlation between different trees generated in the bagging process was increased. By using a RandomForest, the trees generated through the bagging process would be uncorrelated to each other as the variables in each tree would be randomly selected, so it would reduce the variance more than normal bagging.
+
+```{r eval=FALSE, include=TRUE}
+
+### Random Forest ###
+set.seed(1312)
+model_RF<-randomForest(stars.x~.,data=train, ntree=100)
+pred_RF_test = predict(model_RF, test, type="prob")
+```
+
+As an afterthought, a boosting method would have probably worked even better than what was currently implemented as it would have allowed the tree to average over different predictors. With such a method, the predictors which were not performing well could have been fine tuned to fit the residuals better. This would have been even more useful in our specific problem due to the predictors not fitting the data very well. Boosting would therefore allow those predictors to evolve and gain different weights to better fit the data. Due to time and technological constraints, we were however unable to implement this specific method in our project.
+
+
+>Evaluation
+
+```{r echo=FALSE}
+confusionMatrix(pred_RF_test, test$stars.x)
+```
+
+While training our model, we observed that it did not work very well in the training set. Specifically, the model reported an error rate averaging at around 67%, which meant that 67% of the predictions on the data were actually false. This result may be due to the fact that the training dataset is a lot larger than the testing dataset and considering that there are three main variables, the testing data may be by luck easier to categorise with those specific variables.
+
+We could further note, using the graph below, that the most important variables in the dataset were the review counts variable as well as the states variable, representing which state each business was located in. This might be explained by a difference in culture between states impacting the amount of stars. Hypothetically, this might have been the result of citizens in that given state being meaner or more prone to give bad reviews. Furthermore, it was noteworthy that variables such as the usefulness and the coolness of the review had a high importance on the model. This meant that further work on the topic involving sentiment analysis could be useful and might greatly improve the model.
+
+```{r echo=FALSE}
+varImpPlot(model_RF,n.var=15 ,main="Graph showing the Importance of the first 15 variables")
+```
+
+When testing the model on the test data, the accuracy was estimated to be around 48%, indicating that about 48% of our test data was correctly predicted. This accuracy was better than the one observed in the training dataset. It is interesting to note that the model predicted extreme classes such as classes 1 and 5 better than the average classes 2,3 and 4, as seen in the covariance matrix below. This could be because the data is heavily skewed towards 5, thus leading the model to classify those observations more accurately.
+
+
+>Most Difficult Challenge
+
+
+Our most difficult challenge was to clean up and transform the data. The datasets themselves were very large and contained a lot of different data, in numeric form and in string variable form. We encountered a problem while trying to merge the different datasets provided into one single dataset containing all the variables because some datasets were correlated in a many-to-many manner. One variable in one dataset, such as the compliment_count variable, corresponded to many different observations in another(the business_data), and as such, it was impossible to produce a code to merge the different datasets into one with the basic packages involved in R. Thus, we had to find a solution in other packages found online. In the end, we used the dplyr package which made it possible to account for many to many problems. 
+
+>Appendix
+
+```{r echo=FALSE}
+summary(data)
+```
+
+>References
+
+Gareth James, Daniela Witten, Trevor Hastie, Robert Tibshirani. An Introduction to Statistical Learning : with Applications in R. New York :Springer, 2013.
+
+Christoph Schröer et al., Procedia Computer Science 181 (2021) ,526–534
